@@ -1,0 +1,159 @@
+#include <Arduino.h>
+#include <FirebaseESP32.h>
+#include <WiFi.h>
+#include <Servo.h>
+#include "DHT.h" // Biblioteca para el sensor de temperatura y humedad
+
+// Credenciales de WiFi
+#define WIFI_SSID "TuSSID"
+#define WIFI_PASSWORD "TuPassword"
+
+// Firebase
+#define FIREBASE_HOST "smartpill-333fd-default-rtdb.firebaseio.com"
+#define FIREBASE_AUTH "fPrWcxUzNdvWjH9VhbLzJOfrRWwq46azMJQD1zjM"
+
+FirebaseData firebaseData;
+FirebaseConfig config;
+FirebaseAuth auth;
+
+// Sensores y servos
+#define DHT_PIN 15 // Pin conectado al DHT
+#define DHT_TYPE DHT11
+#define SERVO1_PIN 18 // Servo 1
+#define SERVO2_PIN 19 // Servo 2
+#define SERVO3_PIN 21 // Servo 3
+#define SERVO4_PIN 22 // Servo 4
+#define SERVO360_PIN 23 // Servo de 360 grados
+
+DHT dht(DHT_PIN, DHT_TYPE);
+Servo servo1;
+Servo servo2;
+Servo servo3;
+Servo servo4;
+Servo servo360;
+
+// Variables
+bool activationStatus = false;
+int dispenserPosition = 0;
+int rotationPosition = 0;
+
+void setup() {
+  Serial.begin(115200);
+
+  // Conectar a WiFi
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Conectando a WiFi...");
+  }
+  Serial.println("Conectado a WiFi!");
+
+  // Configurar Firebase
+  config.host = FIREBASE_HOST;
+  config.signer.tokens.legacy_token = FIREBASE_AUTH;
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+
+  // Configurar sensores y servos
+  dht.begin();
+  servo1.attach(SERVO1_PIN);
+  servo2.attach(SERVO2_PIN);
+  servo3.attach(SERVO3_PIN);
+  servo4.attach(SERVO4_PIN);
+  servo360.attach(SERVO360_PIN);
+  servo1.write(0); // Inicializar en 0 grados
+  servo2.write(0);
+  servo3.write(0);
+  servo4.write(0);
+  servo360.write(0); // Inicializar en 0 grados
+}
+
+void loop() {
+  // Leer datos de temperatura y humedad
+  float temperature = dht.readTemperature();
+  float humidity = dht.readHumidity();
+
+  if (isnan(temperature) || isnan(humidity)) {
+    Serial.println("Error al leer el sensor DHT");
+  } else {
+    Serial.printf("Temperatura: %.2f °C, Humedad: %.2f %%\n", temperature, humidity);
+
+    // Enviar datos a Firebase
+    if (Firebase.setFloat(firebaseData, "/temperature", temperature) &&
+        Firebase.setFloat(firebaseData, "/humidity", humidity)) {
+      Serial.println("Datos de temperatura y humedad enviados correctamente.");
+    } else {
+      Serial.printf("Error al enviar datos: %s\n", firebaseData.errorReason().c_str());
+    }
+  }
+
+  // Leer el estado de activación y la posición del dispensador
+  if (Firebase.getBool(firebaseData, "/activation_status")) {
+    activationStatus = firebaseData.boolData();
+
+    if (activationStatus) {
+      // Leer la posición del dispensador
+      if (Firebase.getInt(firebaseData, "/dispenser_position")) {
+        dispenserPosition = firebaseData.intData();
+
+        // Activar el servo correspondiente
+        switch (dispenserPosition) {
+          case 1:
+            servo1.write(100); // Mover a 100 grados
+            delay(1000);
+            servo1.write(0);   // Regresar a 0 grados
+            break;
+          case 2:
+            servo2.write(100);
+            delay(1000);
+            servo2.write(0);
+            break;
+          case 3:
+            servo3.write(100);
+            delay(1000);
+            servo3.write(0);
+            break;
+          case 4:
+            servo4.write(100);
+            delay(1000);
+            servo4.write(0);
+            break;
+          default:
+            Serial.println("Posición del dispensador no válida");
+            break;
+        }
+      } else {
+        Serial.printf("Error al leer dispenser_position: %s\n", firebaseData.errorReason().c_str());
+      }
+
+      // Control del servo 360 según la posición
+      if (Firebase.getInt(firebaseData, "/rotation_position")) {
+        rotationPosition = firebaseData.intData();
+
+        switch (rotationPosition) {
+          case 1:
+            servo360.write(0); // Primera posición (0 grados)
+            break;
+          case 2:
+            servo360.write(90); // Segunda posición (90 grados)
+            break;
+          case 3:
+            servo360.write(180); // Tercera posición (180 grados)
+            break;
+          case 4:
+            servo360.write(270); // Cuarta posición (270 grados)
+            break;
+          default:
+            Serial.println("Posición de rotación no válida");
+            break;
+        }
+      } else {
+        Serial.printf("Error al leer rotation_position: %s\n", firebaseData.errorReason().c_str());
+      }
+    }
+  } else {
+    Serial.printf("Error al leer activation_status: %s\n", firebaseData.errorReason().c_str());
+  }
+
+  delay(2000); // Esperar antes de la siguiente iteración
+}
